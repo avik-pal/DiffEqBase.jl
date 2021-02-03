@@ -862,7 +862,7 @@ end
       saved_in_cb = true
     end
   end
-  integrator.sol.destats.ncondition += 1
+  # integrator.sol.destats.ncondition += 1
   integrator.u_modified,saved_in_cb
 end
 
