@@ -18,9 +18,14 @@ using Reexport
 
 using Statistics
 
-import ZygoteRules, ChainRulesCore
+using FastBroadcast: @..
+
+import ChainRulesCore
 import LabelledArrays
 import RecursiveArrayTools
+
+import ChainRulesCore: NoTangent
+import ZygoteRules
 
 using Setfield
 
@@ -33,7 +38,7 @@ using SciMLBase: @def, DEIntegrator, DEProblem, AbstractDiffEqOperator,
                  AbstractOptimizationProblem, AbstractQuadratureProblem,
                  AbstractSteadyStateProblem, AbstractJumpProblem,
                  AbstractNoiseProblem, AbstractEnsembleProblem, AbstractDynamicalODEProblem,
-                 DEAlgorithm,
+                 DEAlgorithm, StandardODEProblem,
                  AbstractSensitivityAlgorithm, AbstractODEAlgorithm,
                  AbstractSDEAlgorithm, AbstractDDEAlgorithm, AbstractDAEAlgorithm,
                  AbstractSDDEAlgorithm, AbstractRODEAlgorithm, DAEInitializationAlgorithm,
@@ -101,7 +106,6 @@ const DEDataMatrix{T} = DEDataArray{T,2}
 
 include("utils.jl")
 include("fastpow.jl")
-include("diffeqfastbc.jl")
 include("destats.jl")
 include("calculate_residuals.jl")
 include("tableaus.jl")
@@ -117,7 +121,7 @@ include("data_array.jl")
 include("solve.jl")
 include("internal_euler.jl")
 include("init.jl")
-include("zygote.jl")
+include("chainrules.jl")
 
 """
 $(TYPEDEF)

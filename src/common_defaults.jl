@@ -1,6 +1,7 @@
 @inline UNITLESS_ABS2(x::Number) = abs2(x)
 @inline UNITLESS_ABS2(x::AbstractArray) = sum(UNITLESS_ABS2, x)
 @inline UNITLESS_ABS2(x::RecursiveArrayTools.ArrayPartition) = sum(UNITLESS_ABS2, x.x)
+Base.mapreduce_empty(::typeof(UNITLESS_ABS2), op, T) = abs2(Base.reduce_empty(op, T))
 
 @inline recursive_length(u::AbstractArray{<:Number}) = length(u)
 @inline recursive_length(u::Number) = length(u)
@@ -26,6 +27,8 @@
 @inline NAN_CHECK(x::Enum) = false
 @inline NAN_CHECK(x::AbstractArray) = any(NAN_CHECK, x)
 @inline NAN_CHECK(x::RecursiveArrayTools.ArrayPartition) = any(NAN_CHECK, x.x)
+@inline NAN_CHECK(x::DEDataArray) = NAN_CHECK(x.x)
+
 
 @inline ODE_DEFAULT_UNSTABLE_CHECK(dt,u,p,t) = false
 @inline ODE_DEFAULT_UNSTABLE_CHECK(dt,u::Union{Number,AbstractArray},p,t) = NAN_CHECK(u)

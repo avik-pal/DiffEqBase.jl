@@ -1,5 +1,24 @@
 using LinearAlgebra, SparseArrays, SuiteSparse
 
+struct ForwardSensitivityJacobian{T,JJ<:AbstractMatrix{T}} <: AbstractMatrix{T}
+  J::JJ
+end
+Base.parent(J::ForwardSensitivityJacobian) = J.J
+Base.similar(J::ForwardSensitivityJacobian, ::Type{T}) where T = ForwardSensitivityJacobian(similar(parent(J), T))
+
+struct ForwardSensitivityJacobianFactorization{T,F<:Factorization{T}} <: Factorization{T}
+  factorization::F
+end
+LinearAlgebra.lu!(J::ForwardSensitivityJacobian) = ForwardSensitivityJacobianFactorization(lu!(parent(J)))
+function LinearAlgebra.ldiv!(F::ForwardSensitivityJacobianFactorization, x)
+  F = F.factorization
+  n = size(F, 1)
+  k = length(x)÷n
+  @assert k*n == length(x)
+  ldiv!(F, reshape(x, n, k))
+  x
+end
+
 # This is only used for oop stiff solvers
 default_factorize(A) = lu(A)
 
@@ -22,6 +41,7 @@ end
 function (p::LinSolveFactorize)(::Type{Val{:init}},f,u0_prototype)
   LinSolveFactorize(p.factorization,nothing)
 end
+Base.resize!(p::LinSolveFactorize,i) = p.A = nothing
 
 mutable struct LinSolveGPUFactorize{F,T}
   factorization::F
@@ -39,6 +59,7 @@ end
 function (p::LinSolveGPUFactorize)(::Type{Val{:init}},f,u0_prototype)
   LinSolveGPUFactorize(p.factorization,nothing,cuify(u0_prototype))
 end
+Base.resize!(p::LinSolveGPUFactorize,i) = p.A = nothing
 
 ### Default Linsolve
 
@@ -66,7 +87,7 @@ function (p::DefaultLinSolve)(x,A,b,update_matrix=false;reltol=nothing, kwargs..
     return nothing
   end
   if update_matrix
-    if typeof(A) <: Matrix
+    if A isa Matrix
       blasvendor = BLAS.vendor()
       # if the user doesn't use OpenBLAS, we assume that is a better BLAS
       # implementation like MKL
@@ -78,32 +99,32 @@ function (p::DefaultLinSolve)(x,A,b,update_matrix=false;reltol=nothing, kwargs..
       else
         p.A = lu!(A)
       end
-    elseif typeof(A) <: Tridiagonal
+    elseif A isa Union{Tridiagonal, ForwardSensitivityJacobian}
       p.A = lu!(A)
-    elseif typeof(A) <: Union{SymTridiagonal}
+    elseif A isa Union{SymTridiagonal}
       p.A = ldlt!(A)
-    elseif typeof(A) <: Union{Symmetric,Hermitian}
+    elseif A isa Union{Symmetric,Hermitian}
       p.A = bunchkaufman!(A)
-    elseif typeof(A) <: SparseMatrixCSC
+    elseif A isa SparseMatrixCSC
       p.A = lu(A)
     elseif ArrayInterface.isstructured(A)
       p.A = factorize(A)
-    elseif !(typeof(A) <: AbstractDiffEqOperator)
+    elseif !(A isa AbstractDiffEqOperator)
       # Most likely QR is the one that is overloaded
       # Works on things like CuArrays
       p.A = qr(A)
     end
   end
 
-  if typeof(A) <: Union{Matrix,SymTridiagonal,Tridiagonal,Symmetric,Hermitian} # No 2-arg form for SparseArrays!
+  if A isa Union{Matrix,SymTridiagonal,Tridiagonal,Symmetric,Hermitian,ForwardSensitivityJacobian} # No 2-arg form for SparseArrays!
     x .= b
     ldiv!(p.A,x)
   # Missing a little bit of efficiency in a rare case
-  #elseif typeof(A) <: DiffEqArrayOperator
+  #elseif A isa DiffEqArrayOperator
   #  ldiv!(x,p.A,b)
   elseif ArrayInterface.isstructured(A) || A isa SparseMatrixCSC
     ldiv!(x,p.A,b)
-  elseif typeof(A) <: AbstractDiffEqOperator
+  elseif A isa AbstractDiffEqOperator
     # No good starting guess, so guess zero
     if p.iterable === nothing
       reltol = checkreltol(reltol)
@@ -130,6 +151,7 @@ function (p::DefaultLinSolve)(::Type{Val{:init}},f,u0_prototype)
   end
 end
 
+Base.resize!(p::DefaultLinSolve,i) = p.A = nothing
 const DEFAULT_LINSOLVE = DefaultLinSolve()
 
 ### Default GMRES
@@ -244,4 +266,8 @@ function purge_history!(iter::IterativeSolvers.GMRESIterable, x, b)
   IterativeSolvers.init_residual!(iter.residual, iter.residual.current)
   iter.β = iter.residual.current
   nothing
+end
+
+function Base.resize!(f::LinSolveIterativeSolvers,i)
+    f.iterable = nothing
 end
