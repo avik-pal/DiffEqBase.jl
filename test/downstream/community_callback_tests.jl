@@ -21,15 +21,17 @@ f(u, p, t) = begin
     [dx1, dx2, ddx1, ddx2]
 end
 
-sol = solve(ODEProblem(f, [5.0, 6.0, 0.0, 0.0], (0.0, T)),
-    # Euler(),
-    # dt=0.005,
-    Rosenbrock23(),
-    callback = ContinuousCallback((u, _, _) -> u[1],
-        (integrator) -> (integrator.u[1] = 0; integrator.u[3] = 0)),
+sol = solve(
+    ODEProblem(f, [5.0, 6.0, 0.0, 0.0], (0.0, T)),
+    Rodas5P(),
+    callback = ContinuousCallback(
+        (u, _, _) -> u[1],
+        (integrator) -> (integrator.u[1] = 0; integrator.u[3] = 0)
+    ),
     # callback = ContinuousCallback((u, _, _) -> u[1], (integrator) -> (integrator.u[3] = 0)),
-    reltol = 1e-3,
-    abstol = 1e-3)
+    reltol = 1.0e-5,
+    abstol = 1.0e-5
+)
 
 @show sol.stats
 
@@ -78,13 +80,17 @@ t_half_1 = 0.0
 affect2!(i) = (t_half_1 = i.t)
 
 prob = ODEProblem(model, u0, tspan, perror)
-sol = solve(prob,
+sol = solve(
+    prob,
     Rosenbrock23();
-    callback = CallbackSet(PositiveDomain(),
+    callback = CallbackSet(
+        PositiveDomain(),
         DiscreteCallback(condition, affect!),
-        ContinuousCallback(condition2, affect2!, terminate!)),
+        ContinuousCallback(condition2, affect2!, terminate!)
+    ),
     tstops = [1.0],
-    force_dtmin = true)
+    force_dtmin = true
+)
 
 # https://github.com/SciML/DiffEqBase.jl/issues/515 : Fixed
 
@@ -117,21 +123,23 @@ struct Thingy{B} <: AbstractMultiScaleArrayLeaf{B}
 end
 
 struct PhysicsLaw{T <: AbstractMultiScaleArray, B <: Number} <:
-       AbstractMultiScaleArrayHead{B}
+    AbstractMultiScaleArrayHead{B}
     nodes::Vector{T}
     values::Vector{B}
     end_idxs::Vector{Int}
 end
 
-Newton = construct(PhysicsLaw,
+Newton = construct(
+    PhysicsLaw,
     [
         Thingy([-700.0, -350.0, 0.0, 0.0]),
         Thingy([-550.0, -150.0, 0.0, 0.0]),
         Thingy([-600.0, 15.0, 0.0, 10.0]),
         Thingy([200.0, -200.0, 5.0, -5.0]),
-    ])
+    ]
+)
 
-parameters = [1e-2, 0.06]
+parameters = [1.0e-2, 0.06]
 
 function condition(out, u, t, integrator)
     i = 0
@@ -142,9 +150,10 @@ function condition(out, u, t, integrator)
             out[i] = sum(abs2, u.nodes[k][1:2] .- u.nodes[l][1:2]) - 10000
         end
     end
+    return
 end
 
-function affect!(integrator, idx)
+function collision_affect!(integrator, idx)
     i = 0
     u = integrator.u
     n = length(u.nodes)
@@ -157,12 +166,8 @@ function affect!(integrator, idx)
                 x₂ = u.nodes[l][1:2]
                 v₂ = u.nodes[l][3:4]
                 # https://stackoverflow.com/a/35212639
-                v₁ = (v₁ -
-                      2 / (1 + 1) *
-                      (dot(v₁ - v₂, x₁ - x₂) / sum(abs2, x₁ - x₂) * (x₁ - x₂)))
-                v₂ = -(v₂ -
-                       2 / (1 + 1) *
-                       (dot(v₂ - v₁, x₂ - x₁) / sum(abs2, x₂ - x₁) * (x₂ - x₁)))
+                v₁ = (v₁ - 2 / (1 + 1) * (dot(v₁ - v₂, x₁ - x₂) / sum(abs2, x₁ - x₂) * (x₁ - x₂)))
+                v₂ = -(v₂ - 2 / (1 + 1) * (dot(v₂ - v₁, x₂ - x₁) / sum(abs2, x₂ - x₁) * (x₂ - x₁)))
 
                 println("Collision handled.")
 
@@ -173,8 +178,10 @@ function affect!(integrator, idx)
 
                 set_u!(integrator, u)
                 println(sqrt(sum(abs2, x₁ .- x₂)) - 100, ":", v₁ ./ v₂)
-                println(norm(v₁), ":", norm(v₂), ":", integrator.t, ":",
-                    integrator.t - t_last)
+                println(
+                    norm(v₁), ":", norm(v₂), ":", integrator.t, ":",
+                    integrator.t - t_last
+                )
                 global t_last = integrator.t
                 break
             end
@@ -182,9 +189,11 @@ function affect!(integrator, idx)
     end
 end
 
-cback = VectorContinuousCallback(condition,
-    affect!,
-    (x -> Int(((x - 1) * x) / 2))(length(Newton.nodes)))
+cback = VectorContinuousCallback(
+    condition,
+    collision_affect!,
+    (x -> Int(((x - 1) * x) / 2))(length(Newton.nodes))
+)
 
 problemp = ODEProblem(attactor, Newton, (0.0, Inf), parameters)
 
@@ -201,19 +210,40 @@ end
 function f!(out, u, p, t)
     out[1] = 0
     out[2] = u[3]
-    out[3] = -1.0 * (u[2] - u[1])
+    return out[3] = -1.0 * (u[2] - u[1])
 end
 u0 = [0, 0, 1.0]
 function cond!(out, u, t, i)
     out[1] = u[3]
-    nothing
+    return nothing
 end
-function affect!(int, idx)
-    terminate!(int)
+function terminate_affect!(int, idx)
+    return terminate!(int)
 end
-cb = VectorContinuousCallback(cond!, affect!, nothing, 1)
+cb = VectorContinuousCallback(cond!, terminate_affect!, nothing, 1)
 
 u0 = [0.0, 0.0, 1.0]
 prob = ODEProblem(f!, u0, (0.0, 10.0); callback = cb)
 soln = solve(prob, Tsit5())
-@test soln.t[end] ≈ 4.712347213360699
+@test soln.t[end] ≈ 4.712347213360699 atol = 1e-4
+
+odefun = ODEFunction((u, p, t) -> [u[2], u[2] - p]; mass_matrix = [1 0; 0 0])
+callback = PresetTimeCallback(0.5, integ -> (integ.p = -integ.p))
+prob = ODEProblem(odefun, [0.0, -1.0], (0.0, 1), 1; callback)
+#test that reinit happens for both FSAL and non FSAL integrators
+@testset "dae re-init" for alg in [FBDF(), Rodas5P()]
+    sol = solve(prob, alg)
+    # test that the callback flipping p caused u[2] to get flipped.
+    first_t = findfirst(isequal(0.5), sol.t)
+    @test sol.u[first_t][2] == -sol.u[first_t + 1][2]
+end
+
+daefun = DAEFunction((du, u, p, t) -> [du[1] - u[2], u[2] - p])
+prob = DAEProblem(
+    daefun, [0.0, 0.0], [0.0, -1.0], (0.0, 1), 1;
+    differential_vars = [true, false], callback
+)
+sol = solve(prob, DFBDF())
+# test that the callback flipping p caused u[2] to get flipped.
+first_t = findfirst(isequal(0.5), sol.t)
+@test sol.u[first_t][2] == -sol.u[first_t + 1][2]

@@ -1,13 +1,14 @@
 module DiffEqBaseEnzymeExt
 
-using DiffEqBase
-import DiffEqBase: value
-using Enzyme
-import Enzyme: Const
-using ChainRulesCore
+@static if isempty(VERSION.prerelease)
+    using DiffEqBase
+    import DiffEqBase: value
+    using Enzyme
+    import Enzyme: Const, MixedDuplicated
+    using ChainRulesCore
 
-function Enzyme.EnzymeRules.augmented_primal(config::Enzyme.EnzymeRules.ConfigWidth{1}, func::Const{typeof(DiffEqBase.solve_up)}, ::Type{Duplicated{RT}}, prob, sensealg::Union{Const{Nothing}, Const{<:DiffEqBase.AbstractSensitivityAlgorithm}}, u0, p, args...; kwargs...) where RT
-    @inline function copy_or_reuse(val, idx)
+
+    @inline function copy_or_reuse(config, val, idx)
         if Enzyme.EnzymeRules.overwritten(config)[idx] && ismutable(val)
             return deepcopy(val)
         else
@@ -15,38 +16,85 @@ function Enzyme.EnzymeRules.augmented_primal(config::Enzyme.EnzymeRules.ConfigWi
         end
     end
 
-    @inline function arg_copy(i)
-        copy_or_reuse(args[i].val, i+5)
+    @inline function arg_copy(data, i)
+        config, args = data
+        copy_or_reuse(config, args[i].val, i + 5)
     end
- 
-    res = DiffEqBase._solve_adjoint(copy_or_reuse(prob.val, 2), copy_or_reuse(sensealg.val, 3), copy_or_reuse(u0.val, 4), copy_or_reuse(p.val, 5), SciMLBase.ChainRulesOriginator(), ntuple(arg_copy, Val(length(args)))...;
-        kwargs...)
 
-    dres = deepcopy(res[1])::RT
-    for v in dres.u
-        v.= 0
-    end
-    tup = (dres, res[2])
-    return Enzyme.EnzymeRules.AugmentedReturn{RT, RT, Any}(res[1], dres, tup::Any)
-end
+    # Note these following functions are generally not considered user facing from within Enzyme.
+    # They enable additional performance/usability here (e.g. inactive kwargs).
+    # Contact wsmoses@ before modifying (and beware their semantics may change without semver).
 
-function Enzyme.reverse(config::Enzyme.EnzymeRules.ConfigWidth{1}, func::Const{typeof(DiffEqBase.solve_up)}, ::Type{<:Duplicated{RT}}, tape, prob, sensealg::Union{Const{Nothing}, Const{<:DiffEqBase.AbstractSensitivityAlgorithm}}, u0, p, args...; kwargs...) where RT
-	dres, clos = tape
-    dres = dres::RT
-	dargs = clos(dres)
-    for (darg, ptr) in zip(dargs, (func, prob, sensealg, u0, p, args...))
-        if ptr isa Enzyme.Const
-            continue
+    Enzyme.EnzymeRules.inactive_kwarg(::typeof(DiffEqBase.solve_up), prob, sensalg::Union{Nothing, DiffEqBase.AbstractSensitivityAlgorithm}, u0, p, args...; kwargs...) = nothing
+
+    Enzyme.EnzymeRules.has_easy_rule(::typeof(DiffEqBase.solve_up), prob, sensalg::Union{Nothing, DiffEqBase.AbstractSensitivityAlgorithm}, u0, p, args...; kwargs...) = nothing
+
+    function Enzyme.EnzymeRules.augmented_primal(
+            config::Enzyme.EnzymeRules.RevConfigWidth{1},
+            func::Const{typeof(DiffEqBase.solve_up)}, RTA::Union{Type{Duplicated{RT}}, Type{MixedDuplicated{RT}}}, prob,
+            sensealg::Union{
+                Const{Nothing}, Const{<:DiffEqBase.AbstractSensitivityAlgorithm},
+            },
+            u0, p, args...; kwargs...
+        ) where {RT}
+
+        res = DiffEqBase._solve_adjoint(
+            copy_or_reuse(config, prob.val, 2), copy_or_reuse(config, sensealg.val, 3),
+            copy_or_reuse(config, u0.val, 4), copy_or_reuse(config, p.val, 5),
+            SciMLBase.EnzymeOriginator(), ntuple(Base.Fix1(arg_copy, (config, args)), Val(length(args)))...;
+            kwargs...
+        )
+
+        primal = if Enzyme.EnzymeRules.needs_primal(config)
+            res[1]
+        else
+            nothing
         end
-        if darg == ChainRulesCore.NoTangent()
-            continue
+
+        shadow = if Enzyme.EnzymeRules.needs_shadow(config)
+            Enzyme.make_zero(res[1])::RT
+        else
+            nothing
         end
-        ptr.dval .+= darg
+        tup = if Enzyme.EnzymeRules.needs_shadow(config)
+            (shadow, res[2])
+        else
+            nothing
+        end
+        return Enzyme.EnzymeRules.augmented_rule_return_type(config, RTA)(primal, shadow, tup)
     end
-    for v in dres.u
-        v.= 0
+
+    function Enzyme.EnzymeRules.reverse(
+            config::Enzyme.EnzymeRules.RevConfigWidth{1},
+            func::Const{typeof(DiffEqBase.solve_up)}, ::Union{Type{Duplicated{RT}}, Type{MixedDuplicated{RT}}}, tape, prob,
+            sensealg::Union{
+                Const{Nothing}, Const{<:DiffEqBase.AbstractSensitivityAlgorithm},
+            },
+            u0, p, args...; kwargs...
+        ) where {RT}
+
+        if Enzyme.EnzymeRules.needs_shadow(config)
+            dres, clos = tape
+            dres = dres::RT
+            dargs = clos(dres)
+            for (darg, ptr) in zip(dargs, (func, prob, sensealg, u0, p, args...))
+                if ptr isa Enzyme.Const
+                    continue
+                end
+                if darg == ChainRulesCore.NoTangent()
+                    continue
+                end
+                if ptr isa MixedDuplicated
+                    ptr.dval[] .+= darg
+                else
+                    ptr.dval .+= darg
+                end
+            end
+            Enzyme.make_zero!(dres.u)
+        end
+
+        return ntuple(Returns(nothing), Val(length(args) + 4))
     end
-    return ntuple(_ -> nothing, Val(length(args)+4))
 end
 
 end

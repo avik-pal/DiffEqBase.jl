@@ -1,4 +1,5 @@
 using DiffEqBase, Test, RecursiveArrayTools
+import SciMLBase: AbstractSciMLFunction
 
 macro iop_def(funcdef::Expr)
     """Define in- and out-of-place functions simultaneously.
@@ -21,22 +22,22 @@ macro iop_def(funcdef::Expr)
     end
 end
 
-function test_inplace(du, expected, f::Function, args...)
+function test_inplace(du, expected, f::AbstractSciMLFunction, args...)
     """Test the in-place version of a function."""
     fill!(du, NaN)
     f(du, args...)
-    @test du == expected
+    return @test du == expected
 end
 
 # Allocate du automatically based on type of expected result
-function test_inplace(expected, f::Function, args...)
-    test_inplace(similar(expected), expected, f, args...)
+function test_inplace(expected, f::AbstractSciMLFunction, args...)
+    return test_inplace(similar(expected), expected, f, args...)
 end
 
-function test_iop(expected, f_op::Function, f_ip::Function, args...)
+function test_iop(expected, f_op::AbstractSciMLFunction, f_ip::AbstractSciMLFunction, args...)
     """Test in- and out-of-place version of function both match expected value."""
     @test f_op(args...) == expected
-    test_inplace(expected, f_ip, args...)
+    return test_inplace(expected, f_ip, args...)
 end
 
 @iop_def f(u, p, t) = p[1] .* u
